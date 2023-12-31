@@ -765,6 +765,48 @@ pub const Element = struct {
     attributes: ElementAttributes,
     children: ArrayListUnmanaged(ElementOrCharacterData),
 
+    const IteratorElement = struct {
+        allocator: Allocator,
+        elem_stack: std.ArrayList(*Element),
+
+        pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
+            var ar = std.ArrayList(*Element).init(allocator);
+            try ar.append(elem);
+            return .{
+                .allocator = allocator,
+                .elem_stack = ar,
+            };
+        }
+
+        pub fn deinit(self: *IteratorElement) void {
+            self.elem_stack.deinit();
+        }
+
+        pub fn next(self: *IteratorElement) !?*Element {
+            if (self.elem_stack.items.len == 0) {
+                return null;
+            }
+
+            const element = self.elem_stack.pop();
+            var num_children = element.children.items.len;
+            while (num_children > 0) : (num_children -= 1) {
+                const node: ?*Element = switch (element.children.items[num_children - 1]) {
+                    .element => |e| e,
+                    .cdata => null,
+                };
+                if (node == null) {
+                    continue;
+                }
+                try self.elem_stack.append(node.?);
+            }
+            return element;
+        }
+    };
+
+    pub fn iteratorElement(self: *Element, allocator: Allocator) !IteratorElement {
+        return try IteratorElement.init(allocator, self);
+    }
+
     pub fn deinit(self: *Element, allocator: Allocator) void {
         const attr_slice = self.attributes.slice();
         for (attr_slice.items(.key), attr_slice.items(.value)) |key, value| {
