@@ -16,10 +16,13 @@ pub const ParentNode = node.ParentNode;
 pub const AttributePrefix = node.AttributePrefix;
 pub const AttributeNamespace = node.AttributeNamespace;
 pub const ElementAttributesKey = node.ElementAttributesKey;
+
 pub const Attribute = node.Attribute;
+pub const SimpleAttribute = node.SimpleAttribute;
 pub const CharacterDataInterface = node.CharacterDataInterface;
 pub const CharacterData = node.CharacterData;
 pub const ElementOrCharacterData = node.ElementOrCharacterData;
+pub const IteratorElementFilter = node.IteratorElementFilter;
 
 pub const mutation = @import("dom/mutation.zig");
 

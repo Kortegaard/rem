@@ -755,6 +755,17 @@ pub const Attribute = struct {
     key: ElementAttributesKey,
     value: []const u8,
 };
+
+pub const SimpleAttribute = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+pub const IteratorElementFilter = struct {
+    attributes: ?[]const SimpleAttribute = null,
+    element_type: ?ElementType = null,
+};
+
 /// The type for the attributes of an Element node.
 pub const ElementAttributes = MultiArrayList(Attribute);
 
@@ -767,15 +778,63 @@ pub const Element = struct {
     const IteratorElement = struct {
         allocator: Allocator,
         elem_stack: std.ArrayList(*Element),
-        filter: ?*const fn (elem: *const Element) bool,
+        filter_func: ?*const fn (elem: *const Element) bool = null,
+        filter: ?IteratorElementFilter = null,
 
-        pub fn init(allocator: Allocator, elem: *Element, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
+        pub fn init(allocator: Allocator, elem: *Element, filter: ?IteratorElementFilter) !IteratorElement {
             var ar = std.ArrayList(*Element).init(allocator);
             try ar.append(elem);
             return .{
                 .allocator = allocator,
                 .elem_stack = ar,
                 .filter = filter,
+            };
+        }
+
+        fn filterFunc(self: *IteratorElement, elem: *const Element) bool {
+            var res = true;
+            if (self.filter_func) |ff| {
+                res = ff(elem);
+            }
+            if (self.filter == null) {
+                return res;
+            }
+            if (self.filter.?.element_type) |elem_type| {
+                res = res and elem.element_type == elem_type;
+            }
+            if (self.filter.?.attributes == null) {
+                return res;
+            }
+            var filter_attributes = self.filter.?.attributes.?;
+            const attr_slice = elem.attributes.slice();
+            for (filter_attributes) |attr| {
+                var has_attr = false;
+                for (attr_slice.items(.key), attr_slice.items(.value)) |key, value| {
+                    if (!std.mem.eql(u8, attr.key, key.local_name)) {
+                        continue;
+                    }
+                    var it = std.mem.split(u8, value, " ");
+                    while (it.next()) |v| {
+                        if (std.mem.eql(u8, attr.value, v)) {
+                            has_attr = true;
+                            break;
+                        }
+                    }
+                }
+                if (!has_attr) {
+                    return false;
+                }
+            }
+            return res;
+        }
+
+        pub fn initWithFilterFunction(allocator: Allocator, elem: *Element, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
+            var ar = std.ArrayList(*Element).init(allocator);
+            try ar.append(elem);
+            return .{
+                .allocator = allocator,
+                .elem_stack = ar,
+                .filter_func = filter,
             };
         }
 
@@ -789,7 +848,7 @@ pub const Element = struct {
                 if (a == null) {
                     return null;
                 }
-                if (self.filter == null or self.filter.?(a.?)) {
+                if (self.filterFunc(a.?)) {
                     return a.?;
                 }
             }
@@ -821,8 +880,12 @@ pub const Element = struct {
         return try IteratorElement.init(allocator, self, null);
     }
 
-    pub fn iteratorElementFilter(self: *Element, allocator: Allocator, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
+    pub fn iteratorElementFilter(self: *Element, allocator: Allocator, filter: ?IteratorElementFilter) !IteratorElement {
         return try IteratorElement.init(allocator, self, filter);
+    }
+
+    pub fn iteratorElementFilterFunc(self: *Element, allocator: Allocator, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
+        return try IteratorElement.initWithFilterFunction(allocator, self, filter);
     }
 
     pub fn deinit(self: *Element, allocator: Allocator) void {
