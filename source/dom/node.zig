@@ -919,14 +919,3 @@ pub const CharacterData = struct {
         try self.data.appendSlice(allocator, data);
     }
 };
-
-//pub const ElementFilters = struct {
-//    fn _ofClass(elem: *const Element) bool {
-//        _ = elem;
-//        return true;
-//    }
-//
-//    //pub fn ofClass(class: *const []u8) *const fn (elem: *const Element) bool {
-//    //    _ = class;
-//    //}
-//};
