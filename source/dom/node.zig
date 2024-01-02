@@ -755,7 +755,6 @@ pub const Attribute = struct {
     key: ElementAttributesKey,
     value: []const u8,
 };
-
 /// The type for the attributes of an Element node.
 pub const ElementAttributes = MultiArrayList(Attribute);
 
@@ -768,13 +767,15 @@ pub const Element = struct {
     const IteratorElement = struct {
         allocator: Allocator,
         elem_stack: std.ArrayList(*Element),
+        filter: ?*const fn (elem: *const Element) bool,
 
-        pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
+        pub fn init(allocator: Allocator, elem: *Element, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
             var ar = std.ArrayList(*Element).init(allocator);
             try ar.append(elem);
             return .{
                 .allocator = allocator,
                 .elem_stack = ar,
+                .filter = filter,
             };
         }
 
@@ -783,6 +784,19 @@ pub const Element = struct {
         }
 
         pub fn next(self: *IteratorElement) !?*Element {
+            while (self.elem_stack.items.len != 0) {
+                const a = try self.nextInternal();
+                if (a == null) {
+                    return null;
+                }
+                if (self.filter == null or self.filter.?(a.?)) {
+                    return a.?;
+                }
+            }
+            return null;
+        }
+
+        pub fn nextInternal(self: *IteratorElement) !?*Element {
             if (self.elem_stack.items.len == 0) {
                 return null;
             }
@@ -804,7 +818,11 @@ pub const Element = struct {
     };
 
     pub fn iteratorElement(self: *Element, allocator: Allocator) !IteratorElement {
-        return try IteratorElement.init(allocator, self);
+        return try IteratorElement.init(allocator, self, null);
+    }
+
+    pub fn iteratorElementFilter(self: *Element, allocator: Allocator, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
+        return try IteratorElement.init(allocator, self, filter);
     }
 
     pub fn deinit(self: *Element, allocator: Allocator) void {
@@ -901,3 +919,14 @@ pub const CharacterData = struct {
         try self.data.appendSlice(allocator, data);
     }
 };
+
+//pub const ElementFilters = struct {
+//    fn _ofClass(elem: *const Element) bool {
+//        _ = elem;
+//        return true;
+//    }
+//
+//    //pub fn ofClass(class: *const []u8) *const fn (elem: *const Element) bool {
+//    //    _ = class;
+//    //}
+//};
