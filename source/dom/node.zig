@@ -762,7 +762,7 @@ pub const SimpleAttribute = struct {
 };
 
 pub const IteratorElementFilter = struct {
-    attributes: ?[]const SimpleAttribute = null,
+    attributes: ?std.ArrayList(SimpleAttribute) = null,
     element_type: ?ElementType = null,
 };
 
@@ -779,16 +779,86 @@ pub const Element = struct {
         allocator: Allocator,
         elem_stack: std.ArrayList(*Element),
         filter_func: ?*const fn (elem: *const Element) bool = null,
-        filter: ?IteratorElementFilter = null,
+        filter: IteratorElementFilter = .{},
 
-        pub fn init(allocator: Allocator, elem: *Element, filter: ?IteratorElementFilter) !IteratorElement {
+        pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
             var ar = std.ArrayList(*Element).init(allocator);
             try ar.append(elem);
             return .{
                 .allocator = allocator,
                 .elem_stack = ar,
-                .filter = filter,
             };
+        }
+
+        pub fn deinit(self: *IteratorElement) void {
+            self.elem_stack.deinit();
+            self.deinitFilter();
+        }
+
+        fn deinitFilter(self: *IteratorElement) void {
+            if (self.filter.attributes) |attrs| {
+                for (attrs.items) |attr| {
+                    self.allocator.free(attr.key);
+                    self.allocator.free(attr.value);
+                }
+                attrs.deinit();
+            }
+        }
+
+        pub fn setFilter(self: *IteratorElement, filter: IteratorElementFilter) !IteratorElement {
+            self.deinitFilter();
+            self.filter = filter;
+        }
+
+        pub fn setFilterFunction(self: *IteratorElement, filter_func: ?*const fn (elem: *const Element) bool) !IteratorElement {
+            self.filter_func = filter_func;
+        }
+
+        pub fn filterAttribute(self: *IteratorElement, key: []const u8, value: []const u8) !void {
+            if (self.filter.attributes == null) {
+                self.filter.attributes = std.ArrayList(SimpleAttribute).init(self.allocator);
+            }
+            var key_dupe = try self.allocator.dupe(u8, key);
+            var value_dupe = try self.allocator.dupe(u8, value);
+            var a = SimpleAttribute{ .key = key_dupe, .value = value_dupe };
+            try self.filter.attributes.?.append(a);
+        }
+
+        pub fn filterElementType(self: *IteratorElement, element_type: ElementType) void {
+            self.filter.element_type = element_type;
+        }
+
+        pub fn next(self: *IteratorElement) !?*Element {
+            while (self.elem_stack.items.len != 0) {
+                const a = try self.nextInternal();
+                if (a == null) {
+                    return null;
+                }
+                if (self.filterFunc(a.?)) {
+                    return a.?;
+                }
+            }
+            return null;
+        }
+
+        fn nextInternal(self: *IteratorElement) !?*Element {
+            if (self.elem_stack.items.len == 0) {
+                return null;
+            }
+
+            const element = self.elem_stack.pop();
+            var num_children = element.children.items.len;
+            while (num_children > 0) : (num_children -= 1) {
+                const node: ?*Element = switch (element.children.items[num_children - 1]) {
+                    .element => |e| e,
+                    .cdata => null,
+                };
+                if (node == null) {
+                    continue;
+                }
+                try self.elem_stack.append(node.?);
+            }
+            return element;
         }
 
         fn filterFunc(self: *IteratorElement, elem: *const Element) bool {
@@ -796,18 +866,15 @@ pub const Element = struct {
             if (self.filter_func) |ff| {
                 res = ff(elem);
             }
-            if (self.filter == null) {
-                return res;
-            }
-            if (self.filter.?.element_type) |elem_type| {
+            if (self.filter.element_type) |elem_type| {
                 res = res and elem.element_type == elem_type;
             }
-            if (self.filter.?.attributes == null) {
+            if (self.filter.attributes == null) {
                 return res;
             }
-            var filter_attributes = self.filter.?.attributes.?;
+            var filter_attributes = self.filter.attributes.?;
             const attr_slice = elem.attributes.slice();
-            for (filter_attributes) |attr| {
+            for (filter_attributes.items) |attr| {
                 var has_attr = false;
                 for (attr_slice.items(.key), attr_slice.items(.value)) |key, value| {
                     if (!std.mem.eql(u8, attr.key, key.local_name)) {
@@ -827,65 +894,10 @@ pub const Element = struct {
             }
             return res;
         }
-
-        pub fn initWithFilterFunction(allocator: Allocator, elem: *Element, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
-            var ar = std.ArrayList(*Element).init(allocator);
-            try ar.append(elem);
-            return .{
-                .allocator = allocator,
-                .elem_stack = ar,
-                .filter_func = filter,
-            };
-        }
-
-        pub fn deinit(self: *IteratorElement) void {
-            self.elem_stack.deinit();
-        }
-
-        pub fn next(self: *IteratorElement) !?*Element {
-            while (self.elem_stack.items.len != 0) {
-                const a = try self.nextInternal();
-                if (a == null) {
-                    return null;
-                }
-                if (self.filterFunc(a.?)) {
-                    return a.?;
-                }
-            }
-            return null;
-        }
-
-        pub fn nextInternal(self: *IteratorElement) !?*Element {
-            if (self.elem_stack.items.len == 0) {
-                return null;
-            }
-
-            const element = self.elem_stack.pop();
-            var num_children = element.children.items.len;
-            while (num_children > 0) : (num_children -= 1) {
-                const node: ?*Element = switch (element.children.items[num_children - 1]) {
-                    .element => |e| e,
-                    .cdata => null,
-                };
-                if (node == null) {
-                    continue;
-                }
-                try self.elem_stack.append(node.?);
-            }
-            return element;
-        }
     };
 
     pub fn iteratorElement(self: *Element, allocator: Allocator) !IteratorElement {
-        return try IteratorElement.init(allocator, self, null);
-    }
-
-    pub fn iteratorElementFilter(self: *Element, allocator: Allocator, filter: ?IteratorElementFilter) !IteratorElement {
-        return try IteratorElement.init(allocator, self, filter);
-    }
-
-    pub fn iteratorElementFilterFunc(self: *Element, allocator: Allocator, filter: ?*const fn (elem: *const Element) bool) !IteratorElement {
-        return try IteratorElement.initWithFilterFunction(allocator, self, filter);
+        return try IteratorElement.init(allocator, self);
     }
 
     pub fn deinit(self: *Element, allocator: Allocator) void {
