@@ -818,10 +818,10 @@ pub const Element = struct {
             if (self.filter.attributes == null) {
                 self.filter.attributes = std.ArrayList(SimpleAttribute).init(self.allocator);
             }
-            var key_dupe = try self.allocator.dupe(u8, key);
-            var value_dupe = try self.allocator.dupe(u8, value);
-            var a = SimpleAttribute{ .key = key_dupe, .value = value_dupe };
-            try self.filter.attributes.?.append(a);
+            const key_dupe = try self.allocator.dupe(u8, key);
+            const value_dupe = try self.allocator.dupe(u8, value);
+            var sim_attr = SimpleAttribute{ .key = key_dupe, .value = value_dupe };
+            try self.filter.attributes.?.append(sim_attr);
         }
 
         pub fn filterElementType(self: *IteratorElement, element_type: ElementType) void {
@@ -845,7 +845,6 @@ pub const Element = struct {
             if (self.elem_stack.items.len == 0) {
                 return null;
             }
-
             const element = self.elem_stack.pop();
             var num_children = element.children.items.len;
             while (num_children > 0) : (num_children -= 1) {
@@ -872,7 +871,7 @@ pub const Element = struct {
             if (self.filter.attributes == null) {
                 return res;
             }
-            var filter_attributes = self.filter.attributes.?;
+            const filter_attributes = self.filter.attributes.?;
             const attr_slice = elem.attributes.slice();
             for (filter_attributes.items) |attr| {
                 var has_attr = false;
