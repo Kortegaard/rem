@@ -9,6 +9,7 @@ pub const Dom = @import("source/Dom.zig");
 pub const tree_construction = @import("source/tree_construction.zig");
 pub const Parser = @import("source/Parser.zig");
 pub const util = @import("source/util.zig");
+pub const CssParser = @import("./source/css_selector/parser.zig");
 
 comptime {
     if (@import("builtin").is_test) {

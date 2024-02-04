@@ -13,7 +13,7 @@ pub fn main() !void {
 
     // This is the text that will be read by the parser.
     // Since the parser accepts Unicode codepoints, the text must be decoded before it can be used.
-    const input = "<!doctype html><html><h1 style=bold>Your text goes here!</h1>";
+    const input = "<!doctype html><html><h1 style=bold>Your text goes here!</h1></html>";
     const decoded_input = &rem.util.utf8DecodeStringComptime(input);
 
     // Create the DOM in which the parsed Document will be created.
@@ -36,4 +36,10 @@ pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const document = parser.getDocument();
     try rem.util.printDocument(stdout, document, &dom, allocator);
+
+    var mparser = try rem.CssParser.init(allocator, "div#myId[foo=bar][test^=start][test$=\"end\"] > [class*=container].myClass.myOtherClass > p + a");
+    defer mparser.deinit();
+    try mparser.run();
+
+    mparser.printPairs();
 }
