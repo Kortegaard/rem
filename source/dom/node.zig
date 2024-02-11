@@ -10,6 +10,8 @@ const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const ComptimeStringMap = std.ComptimeStringMap;
 const MultiArrayList = std.MultiArrayList;
+const CssParser = @import("../css_selector/parser.zig");
+const compareStrings = @import("../util.zig").compareString;
 
 pub const Document = struct {
     doctype: ?*DocumentType = null,
@@ -885,12 +887,15 @@ pub const Element = struct {
     const IteratorElement = struct {
         allocator: Allocator,
         base_elem: *Element,
+        filtering_selectors: std.ArrayList(CssParser.Selector),
         filter_func: ?*const fn (elem: *const Element) bool = null,
         filter: IteratorElementFilter = .{},
         iterator_strategy: ?ItStrategy = null,
 
         pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
+            var sels = std.ArrayList(CssParser.Selector).init(allocator);
             return .{
+                .filtering_selectors = sels,
                 .base_elem = elem,
                 .allocator = allocator,
             };
@@ -911,6 +916,20 @@ pub const Element = struct {
             if (self.iterator_strategy != null) {
                 self.iterator_strategy.?.deinit();
             }
+
+            for (self.filtering_selectors.items) |sel| {
+                switch (sel) {
+                    .attribute => |att| {
+                        self.allocator.free(att.name);
+                        self.allocator.free(att.value);
+                    },
+                    .pseudo_class => |pc| {
+                        self.allocator.free(pc.name);
+                    },
+                    else => {},
+                }
+            }
+            self.filtering_selectors.deinit();
         }
 
         fn deinitFilter(self: *IteratorElement) void {
@@ -923,34 +942,53 @@ pub const Element = struct {
             }
         }
 
-        pub fn setFilter(self: *IteratorElement, filter: IteratorElementFilter) !IteratorElement {
-            self.deinitFilter();
-            self.filter = filter;
+        //ok
+        pub fn addFilterSelector(self: *IteratorElement, selector: CssParser.Selector) !void {
+            var fil = try selector.clone(self.allocator);
+            try self.filtering_selectors.append(fil);
+        }
+
+        //ok
+        pub fn addFilterSelectorSlice(self: *IteratorElement, selectors: []CssParser.Selector) !void {
+            for (selectors) |sel| {
+                try self.addFilterSelector(sel);
+            }
         }
 
         pub fn setFilterFunction(self: *IteratorElement, filter_func: ?*const fn (elem: *const Element) bool) !IteratorElement {
             self.filter_func = filter_func;
         }
 
-        pub fn filterAttribute(self: *IteratorElement, key: []const u8, value: []const u8) !void {
-            if (self.filter.attributes == null) {
-                self.filter.attributes = std.ArrayList(SimpleAttribute).init(self.allocator);
-            }
+        //ok
+        pub fn filterAttribute(self: *IteratorElement, key: []const u8, value: []const u8, compare_type: CssParser.CompareType) !void {
             const key_dupe = try self.allocator.dupe(u8, key);
             const value_dupe = try self.allocator.dupe(u8, value);
-            var sim_attr = SimpleAttribute{ .key = key_dupe, .value = value_dupe };
-            try self.filter.attributes.?.append(sim_attr);
+            var selector = CssParser.SelectorAttribure{
+                .name = key_dupe,
+                .value = value_dupe,
+                .compare_type = compare_type,
+            };
+            self.addFilterSelector(.{ .attribute = selector });
         }
 
+        //ok
         pub fn filterElementType(self: *IteratorElement, element_type: ElementType) void {
-            self.filter.element_type = element_type;
+            self.addFilterSelector(.{ .type = .{ .type = element_type } });
         }
 
         pub fn next(self: *IteratorElement) !?*Element {
-            if (self.iterator_strategy != null) {
-                return self.iterator_strategy.?.next();
+            if (self.iterator_strategy == null) {
+                return null;
             }
-            return null;
+            while (true) {
+                var el = try self.iterator_strategy.?.next();
+                if (el == null) {
+                    return null;
+                }
+                if (self.filterFunc(el.?)) {
+                    return el.?;
+                }
+            }
         }
 
         fn filterFunc(self: *IteratorElement, elem: *const Element) bool {
@@ -958,31 +996,8 @@ pub const Element = struct {
             if (self.filter_func) |ff| {
                 res = ff(elem);
             }
-            if (self.filter.element_type) |elem_type| {
-                res = res and elem.element_type == elem_type;
-            }
-            if (self.filter.attributes == null) {
-                return res;
-            }
-            const filter_attributes = self.filter.attributes.?;
-            const attr_slice = elem.attributes.slice();
-            for (filter_attributes.items) |attr| {
-                var has_attr = false;
-                for (attr_slice.items(.key), attr_slice.items(.value)) |key, value| {
-                    if (!std.mem.eql(u8, attr.key, key.local_name)) {
-                        continue;
-                    }
-                    var it = std.mem.split(u8, value, " ");
-                    while (it.next()) |v| {
-                        if (std.mem.eql(u8, attr.value, v)) {
-                            has_attr = true;
-                            break;
-                        }
-                    }
-                }
-                if (!has_attr) {
-                    return false;
-                }
+            for (self.filtering_selectors.items) |selector| {
+                res = res and elem.ofSelectorType(selector);
             }
             return res;
         }
@@ -994,6 +1009,29 @@ pub const Element = struct {
             try iterator.setStrategy(strat);
         }
         return iterator;
+    }
+
+    pub fn ofSelectorType(self: *const Element, selector: CssParser.Selector) bool {
+        switch (selector) {
+            .attribute => |attr| {
+                const attr_slice = self.attributes.slice();
+                for (attr_slice.items(.key), attr_slice.items(.value)) |key, value| {
+                    if (!std.mem.eql(u8, attr.name, key.local_name)) {
+                        continue;
+                    }
+                    if (compareStrings(value, attr.value, attr.compare_type)) {
+                        return true;
+                    }
+                }
+            },
+            .type => |x| {
+                return self.element_type == x.type;
+            },
+            .pseudo_class => {
+                std.debug.print("Function not implemented yet\n", .{});
+            },
+        }
+        return false;
     }
 
     pub fn deinit(self: *Element, allocator: Allocator) void {

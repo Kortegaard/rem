@@ -41,7 +41,7 @@ pub fn deinit(self: *Self) void {
     self.pairs.deinit();
 }
 
-const CompareType = enum {
+pub const CompareType = enum {
     equal,
     contains,
     start_with,
@@ -62,6 +62,16 @@ pub const SelectorAttribure = struct {
     name: []const u8,
     value: []const u8,
     compare_type: CompareType = .equal,
+
+    pub fn clone(el: *const SelectorAttribure, allocator: std.mem.Allocator) !SelectorAttribure {
+        var name_dupe = try allocator.dupe(u8, el.name);
+        var value_dupe = try allocator.dupe(u8, el.value);
+        return .{
+            .name = name_dupe,
+            .value = value_dupe,
+            .compare_type = el.compare_type,
+        };
+    }
 };
 
 pub const Selector = union(enum) {
@@ -72,6 +82,17 @@ pub const Selector = union(enum) {
     pseudo_class: struct {
         name: []const u8,
     },
+
+    pub fn clone(el: *const Selector, allocator: std.mem.Allocator) !Selector {
+        return switch (el.*) {
+            .attribute => |attr| .{ .attribute = try attr.clone(allocator) },
+            .type => |t| .{ .type = t },
+            .pseudo_class => |x| blk: {
+                var name_dupe = try allocator.dupe(u8, x.name);
+                break :blk .{ .pseudo_class = .{ .name = name_dupe } };
+            },
+        };
+    }
 };
 
 pub const Pair = struct {

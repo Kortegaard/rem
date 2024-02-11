@@ -14,6 +14,26 @@ const Dom = rem.Dom;
 const Document = Dom.Document;
 const Element = Dom.Element;
 const CharacterData = Dom.CharacterData;
+const CssParser = rem.CssParser;
+
+pub fn compareString(a: []const u8, b: []const u8, compare_type: CssParser.CompareType) bool {
+    var res = false;
+    switch (compare_type) {
+        .equal => res = std.mem.eql(u8, a, b),
+        .contained_in_whitespace_sep => {
+            var it = std.mem.split(u8, b, " ");
+            while (it.next()) |x| {
+                if (std.mem.eql(u8, a, x)) {
+                    return true;
+                }
+            }
+        },
+        else => {
+            std.debug.print("Implementation needed (compareString)\n", .{});
+        },
+    }
+    return res;
+}
 
 pub fn freeStringHashMap(map: *StringHashMapUnmanaged([]u8), allocator: Allocator) void {
     var iterator = map.iterator();
