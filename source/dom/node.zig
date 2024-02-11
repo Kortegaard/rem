@@ -787,6 +787,12 @@ pub const Element = struct {
             }
         }
 
+        pub fn restart(self: *ItStrategy) !void {
+            switch (self.*) {
+                inline else => |case| try @TypeOf(case).restart(self),
+            }
+        }
+
         pub fn deinit(self: *ItStrategy) void {
             switch (self.*) {
                 inline else => |case| @TypeOf(case).deinit(self),
@@ -798,14 +804,19 @@ pub const Element = struct {
         const ESelf = @This();
 
         base_elem: *Element,
-        curr_child: u16,
+        curr_child: u16 = 0,
 
         pub fn init(elem: *Element) ESelf {
-            return .{ .base_elem = elem, .curr_child = 0 };
+            return .{ .base_elem = elem };
         }
 
         pub fn deinit(ptr: *anyopaque) void {
             _ = ptr;
+        }
+
+        pub fn restart(ptr: *anyopaque) !void {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            self.curr_child = 0;
         }
 
         pub fn next(ptr: *ItStrategy) !?*Element {
@@ -833,18 +844,27 @@ pub const Element = struct {
     pub const IteratorStyleDescendant = struct {
         const ESelf = @This();
         elem_stack: std.ArrayList(*Element),
+        base_elem: *Element,
 
         pub fn init(allocator: std.mem.Allocator, elem: *Element) !ESelf {
             var ar = std.ArrayList(*Element).init(allocator);
             try ar.append(elem);
             return .{
                 .elem_stack = ar,
+                .base_elem = elem,
             };
         }
 
         pub fn deinit(ptr: *anyopaque) void {
             const self: *ESelf = @ptrCast(@alignCast(ptr));
             self.elem_stack.deinit();
+        }
+
+        pub fn restart(ptr: *anyopaque) !void {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            while (self.elem_stack.popOrNull()) |_| {}
+            try self.elem_stack.append(self.base_elem);
+            //std.debug.print("restart -- {any}\n", .{self.elem_stack.items.len});
         }
 
         pub fn next(ptr: *ItStrategy) !?*Element {
@@ -879,14 +899,41 @@ pub const Element = struct {
         }
     };
 
+    const IteratorElementCssSelector = struct {
+        allocator: Allocator,
+        base_elem: *Element,
+        css_parser: CssParser,
+
+        pub fn init(allocator: Allocator, elem: *Element, css_selector_text: []const u8) !IteratorElementCssSelector {
+            var mparser = try CssParser.init(allocator, css_selector_text);
+            try mparser.run();
+
+            return .{
+                .base_elem = elem,
+                .allocator = allocator,
+                .css_parser = mparser,
+            };
+        }
+
+        pub fn next(self: *IteratorElementCssSelector) !?*Element {
+            _ = self;
+            return null;
+        }
+
+        pub fn deinit(self: *IteratorElementCssSelector) void {
+            self.css_parser.deinit();
+        }
+    };
     const IteratorElement = struct {
         allocator: Allocator,
         base_elem: *Element,
+
         filtering_selectors: std.ArrayList(CssParser.Selector),
         filter_func: ?*const fn (elem: *const Element) bool = null,
+
         iterator_strategy: ?ItStrategy = null,
 
-        pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
+        pub fn init(allocator: Allocator, elem: *Element) IteratorElement {
             var sels = std.ArrayList(CssParser.Selector).init(allocator);
             return .{
                 .filtering_selectors = sels,
@@ -905,8 +952,13 @@ pub const Element = struct {
             };
         }
 
+        pub fn restart(self: *IteratorElement) !void {
+            if (self.iterator_strategy != null) {
+                try self.iterator_strategy.?.restart();
+            }
+        }
+
         pub fn deinit(self: *IteratorElement) void {
-            self.deinitFilter();
             if (self.iterator_strategy != null) {
                 self.iterator_strategy.?.deinit();
             }
@@ -988,7 +1040,7 @@ pub const Element = struct {
     };
 
     pub fn iteratorElement(self: *Element, allocator: Allocator, strategy: ?IteratorStrategy) !IteratorElement {
-        var iterator = try IteratorElement.init(allocator, self);
+        var iterator = IteratorElement.init(allocator, self);
         if (strategy) |strat| {
             try iterator.setStrategy(strat);
         }
