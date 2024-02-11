@@ -156,7 +156,7 @@ fn parse(self: *Self) !void {
         switch (state) {
             .clear => {
                 switch (token.tag) {
-                    .string, .square_bracket_open => {
+                    .string, .square_bracket_open, .classname, .id => {
                         state = .parse_selectors;
                         continue;
                     },
@@ -166,7 +166,9 @@ fn parse(self: *Self) !void {
                     Tokenizer.Tag.combinator_next_sibling => curr_pair.setCombinator(Combinators.next_sibling),
                     Tokenizer.Tag.combinator_subsequent_sibling => curr_pair.setCombinator(Combinators.subsequent_sibling),
                     Tokenizer.Tag.space => state = .space,
-                    else => {},
+                    else => {
+                        print("{any}\n", .{token.tag});
+                    },
                 }
                 i += 1;
             },
