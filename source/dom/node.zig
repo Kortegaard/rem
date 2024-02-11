@@ -763,11 +763,6 @@ pub const SimpleAttribute = struct {
     value: []const u8,
 };
 
-pub const IteratorElementFilter = struct {
-    attributes: ?std.ArrayList(SimpleAttribute) = null,
-    element_type: ?ElementType = null,
-};
-
 /// The type for the attributes of an Element node.
 pub const ElementAttributes = MultiArrayList(Attribute);
 
@@ -889,7 +884,6 @@ pub const Element = struct {
         base_elem: *Element,
         filtering_selectors: std.ArrayList(CssParser.Selector),
         filter_func: ?*const fn (elem: *const Element) bool = null,
-        filter: IteratorElementFilter = .{},
         iterator_strategy: ?ItStrategy = null,
 
         pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
@@ -930,16 +924,6 @@ pub const Element = struct {
                 }
             }
             self.filtering_selectors.deinit();
-        }
-
-        fn deinitFilter(self: *IteratorElement) void {
-            if (self.filter.attributes) |attrs| {
-                for (attrs.items) |attr| {
-                    self.allocator.free(attr.key);
-                    self.allocator.free(attr.value);
-                }
-                attrs.deinit();
-            }
         }
 
         //ok
