@@ -58,7 +58,7 @@ const Combinators = enum {
     descendant,
 };
 
-const SelectorAttribure = struct {
+pub const SelectorAttribure = struct {
     name: []const u8,
     value: []const u8,
     compare_type: CompareType = .equal,
@@ -184,7 +184,6 @@ fn parse(self: *Self) !void {
                 i += 1;
             },
             .parse_selectors => {
-                //print("HERE\n", .{});
                 switch (token.tag) {
                     Tokenizer.Tag.string => {
                         var elem_type = ElementType.fromStringHtml(token.info.?);
