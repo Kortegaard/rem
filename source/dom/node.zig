@@ -775,11 +775,111 @@ pub const Element = struct {
     attributes: ElementAttributes,
     children: ArrayListUnmanaged(ElementOrCharacterData),
 
+    const ItStrategy = union(enum) {
+        descendant: IteratorStyleDescendant,
+
+        pub fn next(self: *ItStrategy) anyerror!?*Element {
+            switch (self.*) {
+                inline else => |case| @TypeOf(case).next(self),
+            }
+        }
+
+        pub fn deinit(self: *ItStrategy) anyerror!?*Element {
+            switch (self.*) {
+                inline else => |case| @TypeOf(case).next(self),
+            }
+        }
+    };
+
+    const IteratorStrategy = struct {
+        allocator: std.mem.Allocator,
+        ptr: *anyopaque,
+        nextFn: *const fn (ptr: *anyopaque) anyerror!?*Element,
+        deinitFn: *const fn (ptr: *anyopaque) void,
+
+        pub fn next(self: *IteratorStrategy) !?*Element {
+            return self.nextFn(self.ptr);
+        }
+
+        pub fn deinit(self: *IteratorStrategy) void {
+            self.deinitFn(self.ptr);
+            const T = @TypeOf(self.ptr);
+            var ptr: T = @ptrCast(@alignCast(self.ptr));
+            self.allocator.destroy(ptr);
+        }
+    };
+
+    const IteratorStyleDescendant = struct {
+        const ESelf = @This();
+        elem_stack: std.ArrayList(*Element),
+
+        pub fn init(allocator: std.mem.Allocator, elem: Element) !ESelf {
+            var ar = std.ArrayList(*Element).init(allocator);
+            try ar.append(elem);
+            return .{
+                .allocator = allocator,
+                .elem_stack = ar,
+            };
+        }
+
+        pub fn create(allocator: std.mem.Allocator, elem: Element) !IteratorStrategy {
+            var iterator: *ESelf = allocator.create(IteratorStrategy);
+            errdefer allocator.destroy(iterator);
+            iterator.* = try ESelf.init(allocator, elem);
+            return IteratorStrategy{
+                .allocator = allocator,
+                .ptr = iterator,
+                .nextFn = ESelf.next,
+                .deinitFn = ESelf.deinit,
+            };
+        }
+
+        pub fn deinit(ptr: *anyopaque) void {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            self.elem_stack.deinit();
+        }
+
+        pub fn next(ptr: *anyopaque) !?*Element {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            while (self.elem_stack.items.len != 0) {
+                const a = try self.nextInternal();
+                if (a == null) {
+                    return null;
+                }
+                if (self.filterFunc(a.?)) {
+                    return a.?;
+                }
+            }
+            return null;
+        }
+
+        fn nextInternal(ptr: *anyopaque) !?*Element {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            if (self.elem_stack.items.len == 0) {
+                return null;
+            }
+            const element = self.elem_stack.pop();
+            var num_children = element.children.items.len;
+            while (num_children > 0) : (num_children -= 1) {
+                const node: ?*Element = switch (element.children.items[num_children - 1]) {
+                    .element => |e| e,
+                    .cdata => null,
+                };
+                if (node == null) {
+                    continue;
+                }
+                try self.elem_stack.append(node.?);
+            }
+            return element;
+        }
+    };
+
     const IteratorElement = struct {
         allocator: Allocator,
         elem_stack: std.ArrayList(*Element),
         filter_func: ?*const fn (elem: *const Element) bool = null,
         filter: IteratorElementFilter = .{},
+        iterator_strategy: ?IteratorStrategy = null,
 
         pub fn init(allocator: Allocator, elem: *Element) !IteratorElement {
             var ar = std.ArrayList(*Element).init(allocator);
@@ -790,9 +890,19 @@ pub const Element = struct {
             };
         }
 
+        pub fn setIteratorStrategy(self: *IteratorElement, strategy: IteratorStrategy) void {
+            if (self.iterator_strategy != null) {
+                self.iterator_strategy.?.deinit();
+            }
+            self.iterator_strategy = strategy;
+        }
+
         pub fn deinit(self: *IteratorElement) void {
             self.elem_stack.deinit();
             self.deinitFilter();
+            if (self.iterator_strategy != null) {
+                self.iterator_strategy.?.deinit();
+            }
         }
 
         fn deinitFilter(self: *IteratorElement) void {
@@ -829,35 +939,10 @@ pub const Element = struct {
         }
 
         pub fn next(self: *IteratorElement) !?*Element {
-            while (self.elem_stack.items.len != 0) {
-                const a = try self.nextInternal();
-                if (a == null) {
-                    return null;
-                }
-                if (self.filterFunc(a.?)) {
-                    return a.?;
-                }
+            if (self.iterator_strategy != null) {
+                return self.iterator_strategy.?.next();
             }
             return null;
-        }
-
-        fn nextInternal(self: *IteratorElement) !?*Element {
-            if (self.elem_stack.items.len == 0) {
-                return null;
-            }
-            const element = self.elem_stack.pop();
-            var num_children = element.children.items.len;
-            while (num_children > 0) : (num_children -= 1) {
-                const node: ?*Element = switch (element.children.items[num_children - 1]) {
-                    .element => |e| e,
-                    .cdata => null,
-                };
-                if (node == null) {
-                    continue;
-                }
-                try self.elem_stack.append(node.?);
-            }
-            return element;
         }
 
         fn filterFunc(self: *IteratorElement, elem: *const Element) bool {
@@ -895,8 +980,13 @@ pub const Element = struct {
         }
     };
 
-    pub fn iteratorElement(self: *Element, allocator: Allocator) !IteratorElement {
-        return try IteratorElement.init(allocator, self);
+    pub fn iteratorElement(self: *Element, allocator: Allocator, strategy: ?IteratorStrategy) !IteratorElement {
+        var iterator = try IteratorElement.init(allocator, self);
+        if (strategy) |strat| {
+            std.debug.print("in here\n", .{});
+            iterator.setIteratorStrategy(strat);
+        }
+        return iterator;
     }
 
     pub fn deinit(self: *Element, allocator: Allocator) void {

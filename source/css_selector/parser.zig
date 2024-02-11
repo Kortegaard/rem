@@ -296,8 +296,8 @@ fn skipSpace(tokenizer: *Tokenizer, cursor: *u16) void {
 
 pub fn run(self: *Self) !void {
     try self.tokenizer.run();
-    self.tokenizer.printTokens();
-    print("\n\n", .{});
+    //self.tokenizer.printTokens();
+    //print("\n\n", .{});
 
     try self.parse();
 }
