@@ -793,6 +793,17 @@ pub const Element = struct {
             }
         }
 
+        pub fn reuse(self: *ItStrategy, elem: *Element) !void {
+            self.setBaseElem(elem);
+            try self.restart();
+        }
+
+        fn setBaseElem(self: *ItStrategy, elem: *Element) void {
+            switch (self.*) {
+                inline else => |case| @TypeOf(case).setBaseElem(self, elem),
+            }
+        }
+
         pub fn deinit(self: *ItStrategy) void {
             switch (self.*) {
                 inline else => |case| @TypeOf(case).deinit(self),
@@ -817,6 +828,11 @@ pub const Element = struct {
         pub fn restart(ptr: *anyopaque) !void {
             const self: *ESelf = @ptrCast(@alignCast(ptr));
             self.curr_child = 0;
+        }
+
+        pub fn setBaseElem(ptr: *anyopaque, elem: *Element) void {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            self.base_elem = elem;
         }
 
         pub fn next(ptr: *ItStrategy) !?*Element {
@@ -853,6 +869,11 @@ pub const Element = struct {
                 .elem_stack = ar,
                 .base_elem = elem,
             };
+        }
+
+        pub fn setBaseElem(ptr: *anyopaque, elem: *Element) void {
+            const self: *ESelf = @ptrCast(@alignCast(ptr));
+            self.base_elem = elem;
         }
 
         pub fn deinit(ptr: *anyopaque) void {
@@ -903,27 +924,83 @@ pub const Element = struct {
         allocator: Allocator,
         base_elem: *Element,
         css_parser: CssParser,
+        iterators: std.ArrayList(*IteratorElement),
+        moving_cursor: i32 = 0,
 
         pub fn init(allocator: Allocator, elem: *Element, css_selector_text: []const u8) !IteratorElementCssSelector {
             var mparser = try CssParser.init(allocator, css_selector_text);
             try mparser.run();
 
+            var its = std.ArrayList(*IteratorElement).init(allocator);
+
             return .{
                 .base_elem = elem,
                 .allocator = allocator,
                 .css_parser = mparser,
+                .iterators = its,
             };
         }
 
         pub fn next(self: *IteratorElementCssSelector) !?*Element {
-            _ = self;
+            if (self.iterators.items.len == 0) {
+                if (self.css_parser.pairs.items.len == 0) {
+                    return null;
+                }
+                const pair = &self.css_parser.pairs.items[self.iterators.items.len];
+                var new_it = try self.allocator.create(IteratorElement);
+                new_it.* = try self.base_elem.iteratorElement(self.allocator, .descendant);
+                try new_it.addFilterSelectorSlice(pair.selectors.items);
+                try self.iterators.append(new_it);
+            }
+            var moving_cursor = self.iterators.items.len - 1;
+            var it = self.iterators.items[moving_cursor];
+            var el: ?*Element = null;
+
+            while (moving_cursor >= 0 and moving_cursor < self.iterators.items.len) {
+                it = self.iterators.items[moving_cursor];
+                el = try it.next();
+                if (el != null) {
+                    if (moving_cursor == self.css_parser.pairs.items.len - 1) {
+                        return el;
+                    }
+                    if (moving_cursor + 1 >= self.iterators.items.len) {
+                        const pair = &self.css_parser.pairs.items[self.iterators.items.len];
+                        var new_iterator_strat: IteratorStrategy = switch (pair.combinator) {
+                            .descendant => IteratorStrategy.descendant,
+                            .child => IteratorStrategy.child,
+                            .subsequent_sibling => IteratorStrategy.child, // TODO: CHANGE
+                            .next_sibling => IteratorStrategy.child, // TODO: CHANGE
+                            else => IteratorStrategy.descendant,
+                        };
+                        var new_it = try self.allocator.create(IteratorElement);
+                        new_it.* = try el.?.iteratorElement(self.allocator, new_iterator_strat);
+                        try new_it.addFilterSelectorSlice(pair.selectors.items);
+                        try self.iterators.append(new_it);
+                    } else {
+                        it = self.iterators.items[moving_cursor + 1];
+                        try it.reuse(el.?);
+                    }
+                    moving_cursor += 1;
+                    continue;
+                }
+                if (moving_cursor == 0) {
+                    return null;
+                }
+                moving_cursor -= 1;
+            }
             return null;
         }
 
         pub fn deinit(self: *IteratorElementCssSelector) void {
+            for (self.iterators.items) |it| {
+                it.deinit();
+                self.allocator.destroy(it);
+            }
+            self.iterators.deinit();
             self.css_parser.deinit();
         }
     };
+
     const IteratorElement = struct {
         allocator: Allocator,
         base_elem: *Element,
@@ -955,6 +1032,13 @@ pub const Element = struct {
         pub fn restart(self: *IteratorElement) !void {
             if (self.iterator_strategy != null) {
                 try self.iterator_strategy.?.restart();
+            }
+        }
+
+        pub fn reuse(self: *IteratorElement, elem: *Element) !void {
+            self.base_elem = elem;
+            if (self.iterator_strategy != null) {
+                try self.iterator_strategy.?.reuse(elem);
             }
         }
 
@@ -1044,6 +1128,11 @@ pub const Element = struct {
         if (strategy) |strat| {
             try iterator.setStrategy(strat);
         }
+        return iterator;
+    }
+
+    pub fn iteratorElementCssSelector(self: *Element, allocator: Allocator, css_selector: []const u8) !IteratorElementCssSelector {
+        var iterator = try IteratorElementCssSelector.init(allocator, self, css_selector);
         return iterator;
     }
 
